@@ -1,89 +1,115 @@
-﻿#include <iostream>
-#include <thread>
-#include<vector>
-#include<chrono>
-#include<algorithm>
-#include<windows.h>
+#include <windows.h>
+#include <iostream>
+#include <iomanip>
 
-using namespace std;
+const int THREAD_DELAY_MIN_MAX = 7;
+const int THREAD_DELAY_AVERAGE = 12;
 
-CRITICAL_SECTION cs;
-
-void findMinAndMax(int& min, int& max, vector<int>& vec) {
-
-	min = vec[0];
-	max = vec[0];
-	for (int i = 1; i < vec.size(); i++) {
-		if (min > vec[i]) {
-			min = vec[i];
-		}
-
-		this_thread::sleep_for(chrono::milliseconds(7));
-
-		if (max < vec[i]) {
-			max = vec[i];
-		}
-
-		this_thread::sleep_for(chrono::milliseconds(7));
+struct Array
+{
+	double* a;
+	int size;
+	double average;
+	double min_;
+	double max_;
+	Array (double* a_, int size_): a(a_), size(size_), average(0), min_(0), max_(0){}
+	~Array() 
+	{
+		delete[] a;
 	}
+};
 
-	EnterCriticalSection(&cs);
-	cout << "minimum is " << min << "\n";
-	cout << "maximum is " << max << "\n";
-	LeaveCriticalSection(&cs);
+void Replace(Array* param)
+{
+	for (int i = 0; i < param->size; i++)
+	{
+		if (param->a[i] == param->max_ || param->a[i] == param->min_)
+			param->a[i] = param->average;
+	}
 }
 
-void findAvarage(int& average, vector<int>& vec) {
-	int sum = 0;
-	for (int i = 0; i < vec.size(); i++) {
-		sum += vec[i];
-		this_thread::sleep_for(chrono::milliseconds(12));
+DWORD WINAPI Min_Max(LPVOID arr)
+{
+	std::cout << "Thread Min_Max is started.\n";
+	double min_ = static_cast<Array*>(arr)->a[0];
+	double max_ = min_;
+	int index_min = 0, index_max = 0;
+	for (int i = 1; i < static_cast<Array*>(arr)->size; i++)
+	{
+		if (static_cast<Array*>(arr)->a[i] > max_) 
+		{
+			max_ = static_cast<Array*>(arr)->a[i];
+		}
+		Sleep(THREAD_DELAY_MIN_MAX);
+		if (static_cast<Array*>(arr)->a[i] < min_) 
+		{
+			min_ = static_cast<Array*>(arr)->a[i];
+		}
+		Sleep(THREAD_DELAY_MIN_MAX);
 	}
+	static_cast<Array*>(arr)->max_ = max_;
+	static_cast<Array*>(arr)->min_ = min_;
 
-	average = sum / vec.size();
-	EnterCriticalSection(&cs);
-	cout << "average is " << average << "\n";
-	LeaveCriticalSection(&cs);
+	std::cout << "Min: " << min_ << '\n' << "Max: " << max_ << '\n' 
+		<< "Thread Min_Max is finished.\n";
+	return 0;
 }
 
-int main() {
-
-	vector<int> numbers;
-	int size = 0;
-	int min, max = 0;
-	int average = 0;
-	int num = 0;
-	InitializeCriticalSection(&cs);
-
-	cout << "Enter the array size : ";
-	cin >> size;
-
-	for (int i = 1; i <= size; i++) {
-		cout << " Enter the element with number " << i << " : ";
-		cin >> num;
-		numbers.push_back(num);
+DWORD WINAPI Average(LPVOID arr)
+{
+	std::cout << "Thread Average is started.\n";
+	double sum = 0;
+	for (int i = 0; i < static_cast<Array*>(arr)->size; i++)
+	{
+		sum += static_cast<Array*>(arr)->a[i];
+		Sleep(THREAD_DELAY_AVERAGE);
 	}
+	static_cast<Array*>(arr)->average = sum / static_cast<Array*>(arr)->size;
+	
 
-	thread minMaxThread(findMinAndMax, ref(min), ref(max), ref(numbers));
-	thread avarageThread(findAvarage, ref(average), ref(numbers));
+	std::cout << "Average: " << static_cast<Array*>(arr)->average << '\n' 
+		<< "Thread Average is finished.\n";
+	return 0;
+}
 
-	avarageThread.join();
-	minMaxThread.join();
-	DeleteCriticalSection(&cs);
-
-	cout << "Input array : ";
-	for (int i = 0; i < numbers.size(); i++) {
-		cout << numbers[i] << " ";
+int main()
+{
+	HANDLE hThread;
+	DWORD IDThread;
+	int n;
+	std::cout << "Enter count of elements: ";
+	std::cin >> n;
+	double* a = new double[n];
+	std::cout << "Enter elements:\n";
+	for (int i = 0; i < n; ++i)
+	{
+		std::cin >> a[i];
 	}
-	cout << "\n";
+	auto param = new Array(a, n);
+	hThread = CreateThread(NULL, 0, Min_Max, (LPVOID)param, 0, &IDThread);
+	if (hThread == NULL)
+		return GetLastError();
+	WaitForSingleObject(hThread, INFINITE);
+	CloseHandle(hThread);
 
-	replace(numbers.begin(), numbers.end(), min, average);
-	replace(numbers.begin(), numbers.end(), max, average);
+	HANDLE hAverage;
+	DWORD IDAverage;
 
-	cout << "Result array : ";
-	for (int i = 0; i < numbers.size(); i++) {
-		cout << numbers[i] << " ";
+	hAverage = CreateThread(NULL, 0, Average, (LPVOID)param, 0, &IDAverage);
+	if (hAverage == NULL)
+		return GetLastError();
+	WaitForSingleObject(hAverage, INFINITE);
+	CloseHandle(hAverage);
+
+	std::cout << "New array: ";
+	Replace(param);
+	for (int i = 0; i < param->size; i++)
+	{
+		std::cout << std::setprecision(3) << param->a[i] << " ";
 	}
+	std::cout << '\n';
+
+	delete[] a;
 
 	return 0;
 }
