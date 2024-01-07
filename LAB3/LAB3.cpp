@@ -1,147 +1,160 @@
-﻿#include <Windows.h>
 #include <iostream>
+#include <Windows.h> 
+using std::cin;
+using std::cout;
+HANDLE st;
+int n;
+int markerCount;
+CRITICAL_SECTION criticalSection;
+const int THREAD_DELAY = 5;
 
-using namespace std;
-
-int arraySize = 0;
-int* arr = nullptr;
-CRITICAL_SECTION cs;
-HANDLE* handleThreads;
-HANDLE* handleThreadsAreStarted;
-HANDLE* handleThreadsAreStopped;
-HANDLE* handleThreadsAreExited;
-HANDLE handleMutex;
-
-DWORD WINAPI marker(LPVOID threadIndex)
+struct numsThread
 {
-    WaitForSingleObject(handleThreadsAreStarted[(int)threadIndex], INFINITE);
+	int* arr;
+	int num;
+	HANDLE stop = CreateEvent(NULL, TRUE, FALSE, NULL);
+	HANDLE* event = new HANDLE[2];
+};
 
-    int markedNumbersCounter = 0;
-    srand((int)threadIndex);
-
-    while (true) {
-        EnterCriticalSection(&cs);
-
-        int randomNumber = rand() % arraySize;
-        if (arr[randomNumber] == 0) {
-            Sleep(5);
-            arr[randomNumber] = (int)threadIndex + 1;
-            markedNumbersCounter++;
-            Sleep(5);
-            LeaveCriticalSection(&cs);
-        }
-        else {
-            cout << "\tNumber of threads: " << (int)threadIndex + 1 << "\n";
-            cout << "\tAmount of marked element: " << markedNumbersCounter << "\n";
-            cout << "\tIndex of an element that cannot be marked: " << randomNumber << "\n";
-            cout << "\n";
-            LeaveCriticalSection(&cs);
-
-            SetEvent(handleThreadsAreStopped[(int)threadIndex]);
-            ResetEvent(handleThreadsAreStarted[(int)threadIndex]);
-
-            HANDLE handleThreadStartedExitedPair[]{ handleThreadsAreStarted[(int)threadIndex], handleThreadsAreExited[(int)threadIndex] };
-
-            if (WaitForMultipleObjects(2, handleThreadStartedExitedPair, FALSE, INFINITE) == WAIT_OBJECT_0 + 1) {
-                EnterCriticalSection(&cs);
-                for (size_t i = 0; i < arraySize; i++) {
-                    if (arr[i] == (int)threadIndex + 1) {
-                        arr[i] = 0;
-                    }
-                }
-                LeaveCriticalSection(&cs);
-
-                ExitThread(NULL);
-            }
-            else {
-                ResetEvent(handleThreadsAreStopped[(int)threadIndex]);
-                continue;
-            }
-        }
-    }
+DWORD WINAPI marker(LPVOID _arrF)
+{
+	WaitForSingleObject(st, INFINITE);
+	numsThread arrF = *(static_cast<numsThread*>(_arrF));
+	srand(arrF.num);
+	bool check = false;
+	int count = 0;
+	while (!check)
+	{
+		int temp = rand();
+		temp = temp % n;
+		EnterCriticalSection(&criticalSection);
+		if (arrF.arr[temp] == 0)
+		{
+			Sleep(THREAD_DELAY);
+			arrF.arr[temp] = arrF.num;
+			Sleep(THREAD_DELAY);
+			count += 1;
+			LeaveCriticalSection(&criticalSection);
+		}
+		else
+		{
+			cout << arrF.num << " " << count << " " << temp << "\n";
+			LeaveCriticalSection(&criticalSection);
+			SetEvent(arrF.stop);
+			int k = WaitForMultipleObjects(2, arrF.event, FALSE, INFINITE) - WAIT_OBJECT_0;
+			if (k == 0)
+			{
+				check = true;
+			}
+		}
+	}
+	for (int i = 0; i < n; i++)
+	{
+		if (arrF.arr[i] == arrF.num)
+		{
+			arrF.arr[i] = 0;
+		}
+	}
+	return 0;
 }
+
 
 int main()
 {
+	InitializeCriticalSection(&criticalSection);
+	st = CreateEvent(NULL, TRUE, FALSE, NULL);
+	if (NULL == st) return  GetLastError();
+	int* arr;
+	DWORD* dwThread;
+	HANDLE* hThread;
+	cout << "Enter size:\n";
+	cin >> n;
+	arr = new int[n];
+	for (int i = 0; i < n; i++)
+	{
+		arr[i] = 0;
+	}
+	cout << "Enter amount of markets:\n";
+	cin >> markerCount;
+	hThread = new HANDLE[markerCount];
+	dwThread = new DWORD[markerCount];
+	numsThread* arrF = new numsThread[markerCount];
+	bool* check = new bool[markerCount];
+	HANDLE* stop = new HANDLE[markerCount];
+	for (int i = 0; i < markerCount; i++)
+	{
+		arrF[i].arr = arr;
+		arrF[i].num = i + 1;
+		stop[i] = arrF[i].stop;
+		arrF[i].event[0] = CreateEvent(NULL, FALSE, FALSE, NULL);
+		if (NULL == arrF[i].event[0]) return GetLastError();
+		arrF[i].event[1] = CreateEvent(NULL, FALSE, FALSE, NULL);
+		if (NULL == arrF[i].event[1]) return GetLastError();
+		hThread[i] = CreateThread(NULL, 0, marker, static_cast<LPVOID>(&arrF[i]), 0, &dwThread[i]);
+		if (NULL == hThread[i]) return GetLastError();
+		check[i] = false;
+	}
+	SetEvent(st);
+	bool quit = true;
+	while (quit)
+	{
+		quit = false;
+		int index;
+		WaitForMultipleObjects(markerCount, stop, TRUE, INFINITE);
+		for (int i = 0; i < n; i++)
+		{
+			cout << arr[i] << " ";
+		}
+		cout << "\n";
+		cout << "Enter the number of the thread to be completed: ";
+		cin >> index;
+		--index;
+		if (index >= markerCount || index < 0)
+		{
+			cout << "Error input.\n";
+		}
+		else if (check[index])
+		{
+			cout << "This thread was ended.\n";
+		}
+		else
+		{
+			SetEvent(arrF[index].event[0]); //end the process
+			WaitForSingleObject(hThread[index], INFINITE);
+			for (int i = 0; i < n; i++)
+			{
+				cout << arr[i] << " ";
+			}
+			cout << "\n";
+			check[index] = true;
+		}
 
-    int amountOfThreads = 0;
-    cout << "Enter the size of the element array: ";
-    cin >> arraySize;
-    arr = new int[arraySize] {};
-    cout << "Enter the number of threads : ";
-    cin >> amountOfThreads;
+		for (int i = 0; i < markerCount; i++)
+		{
+			if (!check[i])
+			{
+				ResetEvent(arrF[i].stop);
+				SetEvent(arrF[i].event[1]); //continue the process
+				quit = true;
+			}
+		}
+	}
+	for (int i = 0; i < markerCount; i++)
+	{
+		CloseHandle(hThread[i]);
+		CloseHandle(stop[i]);
+		CloseHandle(arrF[i].event[0]);
+		CloseHandle(arrF[i].event[1]);
+	}
+	CloseHandle(st);
+	DeleteCriticalSection(&criticalSection);
 
-    InitializeCriticalSection(&cs);
+	delete[] arr;
+	delete[] hThread;
+	delete[] dwThread;
+	delete[] arrF;
+	delete[] check;
+	delete[] stop;
 
-    handleThreads = new HANDLE[amountOfThreads];
-    handleThreadsAreStarted = new HANDLE[amountOfThreads];
-    handleThreadsAreStopped = new HANDLE[amountOfThreads];
-    handleThreadsAreExited = new HANDLE[amountOfThreads];
-    handleMutex = CreateMutex(NULL, FALSE, NULL);
-
-    for (int i = 0; i < amountOfThreads; i++) {
-        handleThreads[i] = CreateThread(NULL, 1, marker, (LPVOID)i, NULL, NULL);
-        handleThreadsAreStarted[i] = CreateEvent(NULL, TRUE, FALSE, NULL);
-        handleThreadsAreStopped[i] = CreateEvent(NULL, TRUE, FALSE, NULL);
-        handleThreadsAreExited[i] = CreateEvent(NULL, TRUE, FALSE, NULL);
-
-    }
-
-    for (int i = 0; i < amountOfThreads; i++) {
-        SetEvent(handleThreadsAreStarted[i]);
-    }
-
-    int amount_of_completed_threads = 0;
-    bool* is_thread_exited = new bool[amountOfThreads] {};
-    while (amount_of_completed_threads < amountOfThreads) {
-        WaitForMultipleObjects(amountOfThreads, handleThreadsAreStopped, TRUE, INFINITE);
-
-        handleMutex = OpenMutex(NULL, FALSE, NULL);
-
-        cout << "The resulting array: ";
-        for (int i = 0; i < arraySize; i++) {
-            cout << arr[i] << " ";
-        }
-        cout << "\n";
-
-        ReleaseMutex(handleMutex);
-
-        int stopMarkerId;
-        cout << "Enter the number of the thread you want to stop:\n";
-        cin >> stopMarkerId;
-        stopMarkerId--;
-
-        if (!is_thread_exited[stopMarkerId]) {
-            amount_of_completed_threads++;
-            is_thread_exited[stopMarkerId] = true;
-
-            SetEvent(handleThreadsAreExited[stopMarkerId]);
-            WaitForSingleObject(handleThreads[stopMarkerId], INFINITE);
-            CloseHandle(handleThreads[stopMarkerId]);
-            CloseHandle(handleThreadsAreExited[stopMarkerId]);
-            CloseHandle(handleThreadsAreStarted[stopMarkerId]);
-        }
-
-        handleMutex = OpenMutex(NULL, FALSE, NULL);
-
-        cout << "Array: ";
-        for (int i = 0; i < arraySize; i++) {
-            cout << arr[i] << " ";
-        }
-        cout << "\n";
-
-        ReleaseMutex(handleMutex);
-
-        for (int i = 0; i < amountOfThreads; i++) {
-            if (!is_thread_exited[i]) {
-                ResetEvent(handleThreadsAreStopped[i]);
-                SetEvent(handleThreadsAreStarted[i]);
-            }
-        }
-    }
-    for (int i = 0; i < amountOfThreads; i++) {
-        CloseHandle(handleThreadsAreStopped[i]);
-    }
-    DeleteCriticalSection(&cs);
-    return 0;
+	return 0;
 }
